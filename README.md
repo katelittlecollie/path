@@ -1,5 +1,7 @@
 # Little Collie Path
 
+[![tests](https://github.com/katelittlecollie/path/actions/workflows/test.yml/badge.svg)](https://github.com/katelittlecollie/path/actions/workflows/test.yml)
+
 Path is a file-based software development documentation system for building software with or without AI assistance. It gives every project a structured, traceable set of documents — requirements, blueprints, tasks, and a build log — that an AI agent or a human developer can pick up and act on without prior context.
 
 Every document is an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) concept: Markdown with YAML frontmatter, readable with a text editor and queryable with standard tools.
@@ -29,30 +31,43 @@ An `AGENTS.md` at the project root is the entry point for any AI agent starting 
 
 **The forecast says what it rests on, or says nothing.** `path status` projects the remaining backlog against the rate of the last fourteen days, names that window, and marks the figure derived when it leans on an estimate. Below two completions in the window it prints a refusal rather than a number, and never widens the window to find data. It describes the backlog, never a person.
 
+`path status --html` writes that same reading to a single self-contained page — no server, no build step, no network calls. This is Path's own:
+
+![The Path status page: a forecast banner reading 26.5 points per week over the last fourteen days, above a burn-up chart of completed against remaining points](docs/status-page.png)
+
 ## Setup
 
-### 1. Clone
+### 1. Install the CLI
+
+```bash
+uv tool install git+https://github.com/katelittlecollie/path.git
+```
+
+or, with pipx:
+
+```bash
+pipx install git+https://github.com/katelittlecollie/path.git
+```
+
+Either one puts `path` on your `$PATH` in its own environment, with PyYAML alongside it. Upgrade later with `uv tool upgrade little-collie-path` or `pipx upgrade little-collie-path`.
+
+**Or install from a clone**, which is what you want if you intend to change Path itself, or to symlink the agent skill in step 4:
 
 ```bash
 git clone https://github.com/katelittlecollie/path.git ~/code/path
-```
-
-### 2. Put the CLI on your `$PATH`
-
-```bash
 ln -s ~/code/path/bin/path ~/.local/bin/path
 ```
 
-`~/.local/bin` is conventionally already on `$PATH`.
+`~/.local/bin` is conventionally already on `$PATH`. There is still one copy of the tool either way: nothing is copied into a project.
 
-### 3. Requirements
+### 2. Requirements
 
-- **Python 3** with **PyYAML** — `python3 -m pip install --user pyyaml`
+- **Python 3.10+** with **PyYAML** — installed for you by `uv tool install` or `pipx`; from a clone, `python3 -m pip install --user pyyaml`
 - **git** — `path migrate` reads history
 - **[mikefarah's `yq`](https://github.com/mikefarah/yq)** (optional) — only to query frontmatter yourself. Two unrelated tools share the name `yq`; the other cannot read these files at all. See `blueprints/06-okf-mapping.md`.
 - **[graphify](https://pypi.org/project/graphifyy/)** (optional) — `path .` builds a knowledge graph when it is installed, and offers to install it when it is not. Its absence never fails an operation.
 
-### 4. The global profile (optional)
+### 3. The global profile (optional)
 
 ```bash
 export LCP_HOME="$HOME/.lcp"     # in ~/.zshrc or ~/.bashrc
@@ -60,7 +75,7 @@ export LCP_HOME="$HOME/.lcp"     # in ~/.zshrc or ~/.bashrc
 
 Personal preferences — how you work, your defaults — live in `$LCP_HOME/profile/`, outside every project and outside this repository. Any project's own documentation overrides them on conflict. See `blueprints/07-profile-and-precedence.md`.
 
-### 5. Optional: a `path` skill for your agent harness
+### 4. Optional: a `path` skill for your agent harness
 
 `AGENTS.md` already documents the CLI, so any agent that reads it can run `path`. To make it a first-class, model-invocable skill — surfaced by name in Claude Code, opencode, and the like — symlink the one skill file this repo ships into each harness's skills directory:
 
@@ -68,6 +83,8 @@ Personal preferences — how you work, your defaults — live in `$LCP_HOME/prof
 ln -sfn ~/code/path/.claude/skills/path ~/.claude/skills/path            # Claude Code
 ln -sfn ~/code/path/.claude/skills/path ~/.config/opencode/skills/path   # opencode
 ```
+
+Those paths assume the clone from step 1. The skill ships inside the packaged install too, but a clone is the only layout where a symlink to it is stable across upgrades.
 
 **Symlink, don't copy — and this stays true for any skill added here.** The `path` skill only shells out to the CLI and prints its output: it carries no harness-specific dispatch (no Agent-tool vs `@mention`, no per-platform Python-path detection). So one canonical file serves every harness, and a symlink guarantees they cannot drift apart — the same "one copy, nothing to drift" rule the CLI itself follows.
 
