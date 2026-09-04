@@ -1,0 +1,884 @@
+#!/usr/bin/env python3
+"""Little Collie Path — the command line entry point.
+
+Everything deterministic lives behind this command: allocating identifiers,
+shaping frontmatter, enforcing status transitions, validating, reporting
+metrics, migrating. Judgment work lives in the documents, where a human or an
+AI reads it and thinks. See blueprints/01-architecture.md.
+
+Subcommands land here as the build proceeds. Anything not yet implemented says
+so rather than pretending.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+
+import json  # noqa: E402
+import okf  # noqa: E402
+import check as check_mod  # noqa: E402
+import tasks as tasks_mod  # noqa: E402
+import batches as batches_mod  # noqa: E402
+import next as next_mod  # noqa: E402
+import buildlog as buildlog_mod  # noqa: E402
+import decisions as decisions_mod  # noqa: E402
+import metrics as metrics_mod  # noqa: E402
+import migrate as migrate_mod  # noqa: E402
+import profile as profile_mod  # noqa: E402
+import graphify_check  # noqa: E402
+import graphify_run  # noqa: E402
+import init as init_mod  # noqa: E402
+import close as close_mod  # noqa: E402
+import status as status_mod  # noqa: E402
+
+# Planned subcommands, in the order they are being built. Registered now so the
+# command surface is discoverable in --help and so an agent reading the help
+# learns what exists rather than guessing at names that will error. Empty for
+# now — every planned subcommand is implemented — but kept so the next one has a
+# home before it is built.
+NOT_YET: dict[str, str] = {}
+
+
+def _fibonacci(value: str) -> int:
+    """An --effort argument. Any Fibonacci number; the sequence has no end."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{value!r} is not a number") from None
+    if not tasks_mod.is_fibonacci(number):
+        raise argparse.ArgumentTypeError(
+            f"{number} is not a Fibonacci number. The scale is 1, 2, 3, 5, 8, 13, 21, 34, ... — "
+            "see blueprints/03-conventions.md"
+        )
+    return number
+
+
+def resolve_root(explicit: str | None) -> Path:
+    root = okf.find_project_root(Path(explicit) if explicit else None)
+    if root is None:
+        sys.exit(
+            "No Path project found here.\n"
+            "Expected a `.path/` directory, or requirements/ and blueprints/ at the root.\n"
+            "Run `path .` to initialize one."
+        )
+    return root
+
+
+def cmd_check(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+
+    # One positional takes either kind of id. The prefix already says which,
+    # and making the caller remember a flag for something the argument states
+    # would be a worse interface than the one that reads it.
+    target_id = args.task
+    is_batch = bool(target_id) and str(target_id).upper().startswith("B-")
+    code, findings = check_mod.run(
+        root,
+        task_id=None if is_batch else target_id,
+        batch_id=target_id if is_batch else None,
+        write_proof=not args.no_proof,
+    )
+
+    fails = [f for f in findings if f.level == "fail"]
+    warns = [f for f in findings if f.level == "warn"]
+
+    target = target_id or root.name
+    if not findings:
+        print(f"ok — {target} passes every check.")
+        return 0
+
+
+    for finding in findings:
+        print(finding)
+
+    print()
+    summary = []
+    if fails:
+        summary.append(f"{len(fails)} failure{'s' if len(fails) != 1 else ''}")
+    if warns:
+        summary.append(f"{len(warns)} warning{'s' if len(warns) != 1 else ''}")
+    print(f"{target}: {', '.join(summary)}.")
+
+    if code == 0:
+        print("Nothing blocking — proof recorded." if target_id else "Nothing blocking.")
+    return code
+
+
+def cmd_new(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    try:
+        created = tasks_mod.new_task(
+            root,
+            title=args.title,
+            effort=args.effort,
+            project=args.project,
+            drafted_by=args.drafted_by,
+            implements=args.implements or [],
+            requires=args.requires or [],
+        )
+    except (tasks_mod.TaskError, okf.OKFError) as exc:
+        sys.exit(str(exc))
+
+    task_id = created.name.split("-")[0] + "-" + created.name.split("-")[1]
+
+    # Membership goes through `batches.add` rather than being written here, so
+    # there is one code path that sets path.batch and appends to the sequence.
+    if args.batch:
+        try:
+            batches_mod.add(root, args.batch, [task_id])
+        except (tasks_mod.TaskError, okf.OKFError) as exc:
+            sys.exit(f"{task_id} created, but adding it to {args.batch} failed: {exc}")
+
+    print(f"{task_id} created: {created}")
+    if args.batch:
+        print(f"Added to {args.batch}.")
+    if args.effort is None:
+        print(
+            "\nNo effort estimate set. The Definition of Ready wants one before this is\n"
+            f"ready to start, and `path check {task_id}` will flag it until you add one."
+        )
+    print("\nFill in the objective, scope, and acceptance criteria before starting.")
+    return 0
+
+
+def cmd_new_batch(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    try:
+        created = batches_mod.new_batch(
+            root,
+            title=args.title,
+            project=args.project,
+            drafted_by=args.drafted_by,
+        )
+    except (tasks_mod.TaskError, okf.OKFError) as exc:
+        sys.exit(str(exc))
+
+    batch_id = "-".join(created.name.split("-")[:2])
+    print(f"{batch_id} created: {created}")
+    print(f"\nAdd tasks with `path batch add {batch_id} T-NNN ...`, then say in the body why")
+    print("they belong together. A batch with no shared outcome is just a list.")
+    return 0
+
+
+def cmd_batch(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    action = {"add": batches_mod.add, "remove": batches_mod.remove, "order": batches_mod.order}[
+        args.action
+    ]
+    try:
+        action(root, args.batch, args.tasks)
+    except (tasks_mod.TaskError, okf.OKFError) as exc:
+        sys.exit(str(exc))
+
+    verb = {"add": "added to", "remove": "removed from", "order": "ordered in"}[args.action]
+    print(f"{', '.join(args.tasks)} {verb} {args.batch}")
+    return 0
+
+
+def cmd_batch_transition(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    try:
+        if args.action == "start":
+            moved = batches_mod.start(root, args.batch)
+        else:
+            moved = batches_mod.complete(root, args.batch, by=args.by)
+    except (tasks_mod.TaskError, okf.OKFError) as exc:
+        sys.exit(str(exc))
+
+    if not moved:
+        print(f"{args.batch}: nothing to {args.action} — every member is already past it.")
+        return 0
+
+    for task_id, status in moved:
+        print(f"{task_id} -> {status}")
+
+    if args.action == "complete":
+        print(f"\n{len(moved)} task(s) complete. One retrospective covers them all:")
+        print(f"  path new retrospective --for {args.batch}")
+        print(f"Then `path check {args.batch}` verifies every member at once.")
+    return 0
+
+
+def cmd_new_retrospective(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    related: list[str] = []
+    title_parts: list[str] = []
+
+    for target in args.related:
+        if str(target).upper().startswith("B-"):
+            try:
+                related.extend(batches_mod.member_ids(root, target))
+                doc = okf.load(batches_mod.find_batch(root, target))
+            except (tasks_mod.TaskError, okf.OKFError) as exc:
+                sys.exit(str(exc))
+            title_parts.append(str(doc.meta.get("title") or target))
+        else:
+            try:
+                doc = okf.load(tasks_mod.find_task(root, target))
+            except (tasks_mod.TaskError, okf.OKFError) as exc:
+                sys.exit(str(exc))
+            related.append(str(target))
+            title_parts.append(str(doc.meta.get("title") or target))
+
+    # Deduplicated, order preserved: a task named twice is one closure, and the
+    # order is the order the caller asked in.
+    seen: set[str] = set()
+    related = [t for t in related if not (t in seen or seen.add(t))]
+
+    try:
+        path = buildlog_mod.write_retrospective(
+            root, related, title=args.title or " and ".join(title_parts)
+        )
+    except (tasks_mod.TaskError, okf.OKFError) as exc:
+        sys.exit(str(exc))
+
+    print(f"Retrospective: {path}")
+    print(f"path.related_tasks: {', '.join(related)}")
+    print("\nThe list is filled in; the thinking is not. Answer every prompt in the body.")
+    return 0
+
+
+def cmd_task(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    to_status = {"start": "in-progress", "block": "blocked", "complete": "complete"}[args.action]
+    try:
+        path, previous = tasks_mod.transition(root, args.task, to_status, by=args.by)
+    except (tasks_mod.TaskError, okf.OKFError) as exc:
+        sys.exit(str(exc))
+
+    print(f"{args.task}: {previous} -> {to_status}")
+
+    if to_status == "complete":
+        print(f"\nRun `path check {args.task}` to verify the completion claim.")
+        print("It needs a RETROSPECTIVE build log entry naming this task, and a current AGENTS.md.")
+    elif previous == "complete":
+        print(f"\nReopened; path.completed cleared. Log it: `path log drift {args.task} "
+              "--kind post-completion-bug --effort N \"...\"`")
+    return 0
+
+
+def cmd_log(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    try:
+        tasks_mod.log(
+            root,
+            kind=args.kind,
+            task_id=args.task,
+            note=args.note,
+            resolution=getattr(args, "resolution", None),
+            drift_kind=getattr(args, "drift_kind", None),
+            effort_to_correct=getattr(args, "effort", None),
+        )
+    except (tasks_mod.TaskError, okf.OKFError) as exc:
+        sys.exit(str(exc))
+    print(f"{args.task}: {args.kind} entry logged.")
+    return 0
+
+
+def cmd_decision(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    try:
+        if args.action == "raise":
+            number = decisions_mod.raise_decision(root, args.question, related_task=args.task)
+            print(f"Decision {number} raised. Resolve it with `path decision resolve {number} \"...\"`.")
+        elif args.action == "resolve":
+            entry = decisions_mod.resolve_decision(root, args.number, args.answer)
+            age = decisions_mod.age_days(entry)
+            print(f"Decision {args.number} resolved after {age} day{'s' if age != 1 else ''}.")
+        else:
+            listed = decisions_mod.listing(root, open_only=args.open)
+            if not listed:
+                print("No decisions." if not args.open else "No open decisions.")
+                return 0
+            for row in listed:
+                state = "open" if not row.get("resolved") else "resolved"
+                task = f" [{row['related_task']}]" if row.get("related_task") else ""
+                print(f"  {row['number']}. ({state}, {row['age_days']}d){task} {row['question']}")
+                if row.get("answer"):
+                    print(f"       -> {row['answer']}")
+    except (decisions_mod.DecisionError, okf.OKFError) as exc:
+        sys.exit(str(exc))
+    return 0
+
+
+def cmd_metrics(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    data = metrics_mod.build(root)
+
+    if args.json:
+        print(json.dumps(data, indent=2))
+        return 0
+
+    burn = data["burnup"]
+    done = burn["points"][-1]["completed"] if burn["points"] else 0
+    print(f"{data['project']}")
+    print(f"  tasks       {data['tasks']['total']} — " + ", ".join(
+        f"{n} {s}" for s, n in data["tasks"]["by_status"].items()
+    ))
+    print(f"  burn-up     {done}/{burn['backlog_total']} points")
+    print(f"  volatility  {sum(b['low'] + b['medium'] + b['high'] for b in data['volatility'])} changes")
+    print(f"  decisions   {sum(1 for d in data['decisions'] if d['open'])} open of {len(data['decisions'])}")
+    print(f"  drift       {len(data['drift'])} events")
+
+    missing = data["tasks"]["without_effort"]
+    if missing:
+        print(f"\n  {len(missing)} task(s) without an effort estimate: {', '.join(missing[:8])}"
+              + (" ..." if len(missing) > 8 else ""))
+
+    prov = data["provenance"]
+    if prov["any_derived"]:
+        print("\n  Some of this is derived, not measured:")
+        if prov["effort_estimated"]:
+            print(f"    {len(prov['effort_estimated'])} effort estimates assigned retrospectively "
+                  "by a model")
+        if prov["completed_inferred"]:
+            print(f"    {len(prov['completed_inferred'])} completion dates inferred from git "
+                  "commit dates")
+    return 0
+
+
+def cmd_migrate(args: argparse.Namespace) -> int:
+    project = Path(args.path or ".").resolve()
+    estimates = {}
+    try:
+        if args.estimates:
+            estimates = migrate_mod.load_estimates(Path(args.estimates))
+        report = migrate_mod.migrate(project, estimates=estimates, apply=args.apply)
+    except (migrate_mod.MigrationError, okf.OKFError) as exc:
+        sys.exit(f"Migration refused:\n{exc}")
+
+    print(migrate_mod.format_report(report, apply=args.apply))
+
+    if not args.apply:
+        print("\nThis was a dry run. Nothing has changed.")
+        print("Re-run with --apply to do it.")
+    else:
+        print("\nDone. Run `path check` and read the diff before committing.")
+        print("To undo: git reset --hard HEAD && git clean -fd")
+        print("  (not `git checkout .` — the renames are staged, so it would restore almost nothing)")
+    return 0
+
+
+def cmd_profile(args: argparse.Namespace) -> int:
+    lcp_home = profile_mod.home(args.lcp_home)
+    if not (lcp_home / "profile").is_dir():
+        created = profile_mod.ensure_scaffold(lcp_home)
+        print(f"No profile existed at {lcp_home} — scaffolded it.", file=sys.stderr)
+        for path in created:
+            print(f"  created {path}", file=sys.stderr)
+        print(
+            f"\nFill in the seed files under {lcp_home / 'profile'} with real preferences, "
+            "then run this again.\n",
+            file=sys.stderr,
+        )
+    print(profile_mod.assemble(lcp_home))
+    return 0
+
+
+def cmd_profile_add(args: argparse.Namespace) -> int:
+    lcp_home = profile_mod.home(args.lcp_home)
+    try:
+        path = profile_mod.add_entry(lcp_home, args.doc, args.text)
+    except profile_mod.ProfileError as exc:
+        sys.exit(str(exc))
+    print(f"Added to {path}")
+    return 0
+
+
+def cmd_install_shims(args: argparse.Namespace) -> int:
+    lcp_home = profile_mod.home(args.lcp_home)
+    if not (lcp_home / "profile").is_dir():
+        sys.exit(f"No profile at {lcp_home}. Run `path profile` first to scaffold it.")
+
+    results = profile_mod.install_shims(lcp_home, apply=not args.dry_run)
+    verb_for = {"added": "add", "updated": "update"}
+    for tool, outcome in results.items():
+        if outcome == "not-detected":
+            print(f"  {tool}: not detected, skipped")
+        elif outcome == "unchanged":
+            print(f"  {tool}: already up to date")
+        elif args.dry_run:
+            print(f"  {tool}: would {verb_for[outcome]}")
+        else:
+            print(f"  {tool}: {outcome}")
+    if args.dry_run:
+        print("\nDry run. Re-run without --dry-run to write.")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    lcp_home = profile_mod.home(args.lcp_home)
+    ok = True
+
+    def line(passed: bool, message: str) -> None:
+        nonlocal ok
+        ok = ok and passed
+        print(f"  [{'ok' if passed else 'FAIL'}] {message}")
+
+    def warn(message: str) -> None:
+        # Does not affect the overall pass/fail — for optional things whose
+        # absence should be visible but must never make `path doctor` red
+        # (F-50: graphify's absence never fails a Path operation).
+        print(f"  [warn] {message}")
+
+    import os as _os
+    line("LCP_HOME" in _os.environ, f"$LCP_HOME set ({lcp_home})" if "LCP_HOME" in _os.environ
+         else f"$LCP_HOME not set; using the default ({lcp_home})")
+    line((lcp_home / "profile").is_dir(), f"profile scaffolded at {lcp_home / 'profile'}")
+
+    try:
+        import yaml  # noqa: F401
+        line(True, "PyYAML available")
+    except ImportError:
+        line(False, "PyYAML missing — install with `python3 -m pip install --user pyyaml`")
+
+    graph = graphify_check.detect(lcp_home)
+    if graph.found and graph.meets_floor:
+        print(f"  [ok] graphify {graph.version} on $PATH")
+    elif graph.found:
+        warn(f"graphify {graph.version} on $PATH, below the configured minimum — "
+             "`path install --graphify` to upgrade")
+    else:
+        warn("graphify not found (optional — `path install` will offer to install it)")
+
+    import shutil as _shutil
+    cli_linked = _shutil.which("path") is not None
+    line(cli_linked, "`path` resolves on $PATH" if cli_linked else
+         "`path` is not on $PATH — symlink bin/path into ~/.local/bin")
+
+    print()
+    print("Path is healthy." if ok else "Something needs attention — see FAIL lines above.")
+    return 0 if ok else 1
+
+
+def _run_graphify_check(args: argparse.Namespace) -> None:
+    """Shared by `path install` and `path update` — one code path, one prompt,
+    per blueprints/01-architecture.md's Knowledge Graph section."""
+    lcp_home = profile_mod.home(args.lcp_home)
+    result = graphify_check.check_and_maybe_install(
+        lcp_home,
+        force=args.graphify,
+        assume_yes=args.yes,
+        decline=args.no_graphify,
+    )
+    if result.action == "remembered-off":
+        print("graphify: skipping (declined earlier — `path install --graphify` to ask again)")
+
+
+def cmd_install(args: argparse.Namespace) -> int:
+    home_path = Path.home() / ".local" / "bin" / "path"
+    cli_source = Path(__file__).resolve()
+    if home_path.resolve() != cli_source:
+        home_path.parent.mkdir(parents=True, exist_ok=True)
+        if home_path.is_symlink() or home_path.exists():
+            home_path.unlink()
+        home_path.symlink_to(cli_source)
+        print(f"Linked {home_path} -> {cli_source}")
+    else:
+        print(f"Already linked: {home_path}")
+
+    lcp_home = profile_mod.home(args.lcp_home)
+    created = profile_mod.ensure_scaffold(lcp_home)
+    if created:
+        print(f"Scaffolded {lcp_home}:")
+        for path in created:
+            print(f"  {path}")
+    else:
+        print(f"Profile already exists at {lcp_home}")
+
+    _run_graphify_check(args)
+    return 0
+
+
+def cmd_update(args: argparse.Namespace) -> int:
+    print("Path itself updates with `git pull` in the Path repository.")
+    _run_graphify_check(args)
+    return 0
+
+
+def cmd_close(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    close_mod.close(root)
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    start = Path(args.path or ".").resolve()
+    root = okf.find_project_root(start)
+
+    # Inside a project: that project. Otherwise, a portfolio of the projects
+    # directly below — the "run it from a parent directory" case in the help.
+    if root is not None:
+        if args.json:
+            print(json.dumps(metrics_mod.build(root), indent=2))
+        else:
+            print(status_mod.render(root))
+        return 0
+
+    roots = metrics_mod.find_projects(start)
+    if not roots:
+        sys.exit(
+            "No Path project here, and none directly below.\n"
+            "cd into a project, or into a directory that contains some."
+        )
+    if args.json:
+        print(json.dumps(metrics_mod.portfolio(roots), indent=2))
+    else:
+        print(status_mod.render_portfolio(roots))
+    return 0
+
+
+def cmd_next(args: argparse.Namespace) -> int:
+    root = resolve_root(args.path)
+    rows = tasks_mod.summary(root)
+    rollups = batches_mod.rollups(root, rows)
+    ready = next_mod.readiness(rows, rollups)
+
+    if args.json:
+        if args.batch:
+            print(json.dumps(next_mod.next_batch(ready, rollups), indent=2))
+        else:
+            print(json.dumps(ready["ready"][0] if ready["ready"] else None, indent=2))
+        return 0
+
+    if args.batch:
+        print(next_mod.render_batch(ready, rollups))
+    else:
+        print(next_mod.render(ready, rollups))
+
+    # An empty queue is a fact about the backlog, not a failure to report it.
+    return 0
+
+
+def cmd_dot(args: argparse.Namespace) -> int:
+    cwd = Path(args.path or ".").resolve()
+    root = okf.find_project_root(cwd)
+
+    if root is None:
+        root, created = init_mod.init_project(cwd)
+        print(f"Initialized a Path project at {root}")
+        for path in created:
+            print(f"  created {path}")
+    else:
+        healed = init_mod.refresh_project(root)
+        if healed:
+            print(f"{root}: refreshed —")
+            for item in healed:
+                print(f"  {item}")
+        else:
+            print(f"{root} is already current.")
+
+    if args.no_graph:
+        return 0
+
+    lcp_home = profile_mod.home(args.lcp_home)
+    config = profile_mod.load_config(lcp_home)
+    setting = config.get("graphify", "ask")
+
+    if setting == "off":
+        return 0
+
+    project_dir = okf.project_dir(root)
+    status = graphify_check.detect(lcp_home)
+
+    if not (status.found and status.meets_floor):
+        # "on" and "ask" both still gate an install behind confirmation —
+        # NF-25 is unconditional, no config value overrides a person's
+        # explicit yes. The only thing config controls is whether Path tries
+        # at all (off skips everything above, before this point).
+        graphify_check.check_and_maybe_install(
+            lcp_home, force=args.graphify, assume_yes=args.yes, decline=args.no_graphify,
+        )
+        status = graphify_check.detect(lcp_home)  # a possible install may have changed this
+
+    if status.found:
+        graphify_run.run(project_dir)
+    else:
+        print("graphify not available — skipping the knowledge graph. `path install` to add it.")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="path",
+        description="Little Collie Path — file-based documentation for AI-assisted builds.",
+    )
+    sub = parser.add_subparsers(dest="command")
+
+    check_parser = sub.add_parser(
+        "check",
+        help="verify a completion claim (proof of done); exits non-zero on failure",
+    )
+    check_parser.add_argument("task", nargs="?", help="task id, e.g. T-023. Omit to check the project.")
+    check_parser.add_argument("--path", help="project directory (default: search upward from cwd)")
+    check_parser.add_argument(
+        "--no-proof", action="store_true", help="do not record the result in the task's frontmatter"
+    )
+    check_parser.set_defaults(func=cmd_check)
+
+    # path new task "<title>"
+    new_parser = sub.add_parser("new", help="scaffold a new task with the next free id")
+    new_sub = new_parser.add_subparsers(dest="what", required=True)
+    new_task_parser = new_sub.add_parser("task", help="a new task")
+    new_task_parser.add_argument("title")
+    new_task_parser.add_argument(
+        "--effort", type=_fibonacci, metavar="N",
+        help="Fibonacci points: 1, 2, 3, 5, 8, 13, 21, ... (no upper bound)",
+    )
+    new_task_parser.add_argument("--project", help="project name (default: the repo directory)")
+    new_task_parser.add_argument(
+        "--drafted-by", default="Human", dest="drafted_by",
+        help="model name/version that wrote this task (default: Human)",
+    )
+    new_task_parser.add_argument(
+        "--implements", action="append", metavar="F-NN", help="requirement id; repeatable"
+    )
+    new_task_parser.add_argument(
+        "--requires", action="append", metavar="T-NNN", help="prerequisite task id; repeatable"
+    )
+    new_task_parser.add_argument("--batch", metavar="B-NNN", help="add the task to this batch")
+    new_task_parser.add_argument("--path", help="project directory")
+    new_task_parser.set_defaults(func=cmd_new)
+
+    new_batch_parser = new_sub.add_parser("batch", help="a new execution batch")
+    new_batch_parser.add_argument("title")
+    new_batch_parser.add_argument("--project", help="project name (default: the repo directory)")
+    new_batch_parser.add_argument(
+        "--drafted-by", default="Human", dest="drafted_by",
+        help="model name/version that shaped this batch (default: Human)",
+    )
+    new_batch_parser.add_argument("--path", help="project directory")
+    new_batch_parser.set_defaults(func=cmd_new_batch)
+
+    next_parser = sub.add_parser(
+        "next",
+        help="the next task to start — or the next batch — without reading every task file",
+    )
+    next_parser.add_argument(
+        "--batch", action="store_true", help="show the next batch and its members instead"
+    )
+    next_parser.add_argument("--json", action="store_true", help="machine-readable output")
+    next_parser.add_argument("--path", help="project directory")
+    next_parser.set_defaults(func=cmd_next)
+
+    # path batch add|remove|order B-NNN T-NNN ...
+    batch_parser = sub.add_parser("batch", help="group tasks into an execution batch")
+    batch_sub = batch_parser.add_subparsers(dest="action", required=True)
+    for action, blurb in (
+        ("add", "put tasks in the batch, appending them to its sequence"),
+        ("remove", "take tasks out of the batch"),
+        ("order", "rewrite the execution order; must name every member exactly once"),
+    ):
+        batch_action = batch_sub.add_parser(action, help=blurb)
+        batch_action.add_argument("batch", metavar="B-NNN")
+        batch_action.add_argument("tasks", metavar="T-NNN", nargs="+")
+        batch_action.add_argument("--path", help="project directory")
+        batch_action.set_defaults(func=cmd_batch, action=action)
+
+    for action, blurb in (
+        ("start", "every pending member -> in-progress"),
+        ("complete", "every in-progress member -> complete; refuses if one was never started"),
+    ):
+        batch_action = batch_sub.add_parser(action, help=blurb)
+        batch_action.add_argument("batch", metavar="B-NNN")
+        batch_action.add_argument(
+            "--by", help="model name/version that did the work (recorded on complete)"
+        )
+        batch_action.add_argument("--path", help="project directory")
+        batch_action.set_defaults(func=cmd_batch_transition, action=action)
+
+    new_retro_parser = new_sub.add_parser(
+        "retrospective",
+        help="scaffold a RETROSPECTIVE entry with path.related_tasks filled in",
+    )
+    new_retro_parser.add_argument(
+        "--for", dest="related", action="append", required=True, metavar="T-NNN|B-NNN",
+        help="task or batch this entry closes; repeatable",
+    )
+    new_retro_parser.add_argument("--title", help="entry title (default: the task or batch title)")
+    new_retro_parser.add_argument("--path", help="project directory")
+    new_retro_parser.set_defaults(func=cmd_new_retrospective)
+
+    # path task start|block|complete <id>
+    task_parser = sub.add_parser("task", help="start, block, or complete a task")
+    task_sub = task_parser.add_subparsers(dest="action", required=True)
+    for action, blurb in (
+        ("start", "pending or blocked -> in-progress"),
+        ("block", "pending or in-progress -> blocked"),
+        ("complete", "in-progress -> complete; stamps path.completed"),
+    ):
+        action_parser = task_sub.add_parser(action, help=blurb)
+        action_parser.add_argument("task", metavar="T-NNN")
+        action_parser.add_argument(
+            "--by", help="model name/version that did the work (recorded on complete)"
+        )
+        action_parser.add_argument("--path", help="project directory")
+        action_parser.set_defaults(func=cmd_task, action=action)
+
+    # path log change|drift|issue <id> "<note>"
+    log_parser = sub.add_parser("log", help="append a change, drift, or issue entry to a task")
+    log_sub = log_parser.add_subparsers(dest="kind", required=True)
+
+    change_parser = log_sub.add_parser(
+        "change", help="a change to scope, tasks, or acceptance criteria"
+    )
+    change_parser.add_argument("task", metavar="T-NNN")
+    change_parser.add_argument("note")
+    change_parser.add_argument("--path", help="project directory")
+    change_parser.set_defaults(func=cmd_log, kind="change")
+
+    drift_parser = log_sub.add_parser("drift", help="AI workflow drift")
+    drift_parser.add_argument("task", metavar="T-NNN")
+    drift_parser.add_argument("note")
+    drift_parser.add_argument(
+        "--kind", dest="drift_kind", required=True, choices=tasks_mod.DRIFT_KINDS
+    )
+    drift_parser.add_argument(
+        "--effort", type=int, required=True, choices=(1, 2, 3),
+        help="effort to correct: 1 trivial re-ask, 2 some rework, 3 significant rework",
+    )
+    drift_parser.add_argument("--path", help="project directory")
+    drift_parser.set_defaults(func=cmd_log, kind="drift")
+
+    issue_parser = log_sub.add_parser("issue", help="a bug or issue found during execution")
+    issue_parser.add_argument("task", metavar="T-NNN")
+    issue_parser.add_argument("note")
+    issue_parser.add_argument("--resolution", help="how it was resolved, or its current status")
+    issue_parser.add_argument("--path", help="project directory")
+    issue_parser.set_defaults(func=cmd_log, kind="issue")
+
+    # path decision raise|resolve|list
+    decision_parser = sub.add_parser("decision", help="raise or resolve a decisions-log row")
+    decision_sub = decision_parser.add_subparsers(dest="action", required=True)
+
+    raise_parser = decision_sub.add_parser("raise", help="log a question blocking a task")
+    raise_parser.add_argument("question")
+    raise_parser.add_argument("--task", metavar="T-NNN", help="the task it blocks")
+    raise_parser.add_argument("--path", help="project directory")
+    raise_parser.set_defaults(func=cmd_decision, action="raise")
+
+    resolve_parser = decision_sub.add_parser("resolve", help="answer a question")
+    resolve_parser.add_argument("number", type=int)
+    resolve_parser.add_argument("answer")
+    resolve_parser.add_argument("--path", help="project directory")
+    resolve_parser.set_defaults(func=cmd_decision, action="resolve")
+
+    list_parser = decision_sub.add_parser("list", help="show decisions with computed ages")
+    list_parser.add_argument("--open", action="store_true", help="only unresolved")
+    list_parser.add_argument("--path", help="project directory")
+    list_parser.set_defaults(func=cmd_decision, action="list")
+
+    # path metrics
+    metrics_parser = sub.add_parser("metrics", help="report metrics, straight from frontmatter")
+    metrics_parser.add_argument("--json", action="store_true", help="the full metrics document")
+    metrics_parser.add_argument("--path", help="project directory")
+    metrics_parser.set_defaults(func=cmd_metrics)
+
+    # path migrate
+    migrate_parser = sub.add_parser(
+        "migrate", help="convert work orders to OKF tasks (dry run unless --apply)"
+    )
+    migrate_parser.add_argument("--path", help="project directory (default: here)")
+    migrate_parser.add_argument(
+        "--apply", action="store_true", help="actually do it; without this it only reports"
+    )
+    migrate_parser.add_argument(
+        "--estimates", metavar="FILE",
+        help='JSON map of work order id to Fibonacci points, e.g. {"WO-001": 3}',
+    )
+    migrate_parser.set_defaults(func=cmd_migrate)
+
+    # path profile [add <doc> <text>]
+    profile_parser = sub.add_parser("profile", help="print or update the global profile")
+    profile_parser.add_argument("--lcp-home", help="override $LCP_HOME")
+    profile_parser.set_defaults(func=cmd_profile)
+    profile_sub = profile_parser.add_subparsers(dest="profile_action")
+
+    profile_add_parser = profile_sub.add_parser(
+        "add", help="persist a durable, cross-project preference"
+    )
+    profile_add_parser.add_argument("doc", choices=profile_mod.PROFILE_DOC_NAMES)
+    profile_add_parser.add_argument("text")
+    profile_add_parser.add_argument("--lcp-home", help="override $LCP_HOME")
+    profile_add_parser.set_defaults(func=cmd_profile_add)
+
+    # path install-shims
+    shims_parser = sub.add_parser(
+        "install-shims", help="write the global-profile pointer into detected tools' config"
+    )
+    shims_parser.add_argument("--lcp-home", help="override $LCP_HOME")
+    shims_parser.add_argument("--dry-run", action="store_true", help="report only, write nothing")
+    shims_parser.set_defaults(func=cmd_install_shims)
+
+    # path doctor
+    doctor_parser = sub.add_parser("doctor", help="check the environment")
+    doctor_parser.add_argument("--lcp-home", help="override $LCP_HOME")
+    doctor_parser.set_defaults(func=cmd_doctor)
+
+    # path install / path update — share the graphify dependency-check flags
+    def _add_graphify_flags(p: argparse.ArgumentParser) -> None:
+        p.add_argument("--lcp-home", help="override $LCP_HOME")
+        p.add_argument("--yes", action="store_true",
+                        help="pre-confirm the graphify install/upgrade prompt")
+        p.add_argument("--no-graphify", action="store_true",
+                        help="decline the graphify check for this run only")
+        p.add_argument("--graphify", action="store_true",
+                        help="ask about graphify again even if a previous run declined")
+
+    # path .
+    dot_parser = sub.add_parser(".", help="initialize or refresh this project, then build its graph")
+    dot_parser.add_argument("--path", help="project directory (default: here)")
+    dot_parser.add_argument("--no-graph", action="store_true", help="skip graphify for this run")
+    _add_graphify_flags(dot_parser)
+    dot_parser.set_defaults(func=cmd_dot)
+
+    install_parser = sub.add_parser(
+        "install", help="link the CLI, seed $LCP_HOME, check for graphify"
+    )
+    _add_graphify_flags(install_parser)
+    install_parser.set_defaults(func=cmd_install)
+
+    update_parser = sub.add_parser("update", help="update Path and re-check dependencies")
+    _add_graphify_flags(update_parser)
+    update_parser.set_defaults(func=cmd_update)
+
+    # path close
+    close_parser = sub.add_parser(
+        "close", help="write a session-close entry, checking the mechanical half of the DoD"
+    )
+    close_parser.add_argument("--path", help="project directory")
+    close_parser.set_defaults(func=cmd_close)
+
+    # path status
+    status_parser = sub.add_parser(
+        "status", help="show project or portfolio status (run from a parent for a portfolio)"
+    )
+    status_parser.add_argument(
+        "--path", help="project or parent directory (default: search upward from cwd)"
+    )
+    status_parser.add_argument(
+        "--json", action="store_true", help="the full metrics document(s) instead of the summary"
+    )
+    status_parser.set_defaults(func=cmd_status)
+
+    for name, description in NOT_YET.items():
+        stub = sub.add_parser(name, help=f"{description} (not implemented yet)", add_help=False)
+        stub.add_argument("rest", nargs=argparse.REMAINDER)
+        stub.set_defaults(func=None)
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        return 0
+    if args.func is None:
+        sys.exit(f"`path {args.command}` is not implemented yet: {NOT_YET[args.command]}")
+    return args.func(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

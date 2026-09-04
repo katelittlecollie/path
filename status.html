@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>path — Path Status</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #666; --border: #ddd;
+    --low: #6aa84f; --medium: #e69138; --high: #cc4125;
+    --line1: #3d7fd9; --line2: #999;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16181d; --fg: #e8e8e8; --muted: #999; --border: #333; }
+  }
+  * { box-sizing: border-box; }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.5 -apple-system, system-ui, sans-serif; margin: 0; padding: 2rem; }
+  h1 { font-size: 1.3rem; margin: 0 0 .25rem; }
+  .meta { color: var(--muted); font-size: .85rem; margin-bottom: 2rem; }
+  section { margin-bottom: 2.5rem; }
+  h2 { font-size: 1rem; border-bottom: 1px solid var(--border); padding-bottom: .4rem; }
+  .empty { color: var(--muted); font-style: italic; }
+  svg { max-width: 100%; height: auto; overflow: visible; }
+  .axis { stroke: var(--border); stroke-width: 1; }
+  .axis-label { fill: var(--muted); font-size: 11px; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { text-align: left; padding: .4rem .6rem; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; }
+  tr.open td.age { color: var(--high); font-weight: 600; }
+  .legend { display: flex; gap: 1rem; font-size: .8rem; color: var(--muted); margin-top: .5rem; }
+  .derived-note { border-left: 3px solid var(--medium); background: color-mix(in srgb, var(--medium) 8%, transparent); padding: .6rem .8rem; margin: -1rem 0 2rem; font-size: .85rem; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .forecast { display: flex; flex-wrap: wrap; gap: 2rem; border: 1px solid var(--border); border-radius: 4px; padding: 1rem 1.2rem; margin-bottom: 2rem; }
+  .forecast .figure { font-size: 1.4rem; font-weight: 600; }
+  .forecast .label { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; }
+  .forecast .caveat { flex-basis: 100%; color: var(--muted); font-size: .85rem; }
+  .board-group { margin-bottom: 1.4rem; }
+  .board-group h3 { font-size: .9rem; margin: 0 0 .5rem; }
+  .board-group h3 .progress { color: var(--muted); font-weight: 400; }
+  .row { display: flex; gap: .8rem; align-items: baseline; padding: .3rem 0 .3rem .8rem; border-left: 3px solid var(--line1); }
+  .row.secondary { border-left-color: var(--border); color: var(--muted); }
+  .row .id { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; }
+  .row .note { font-size: .8rem; color: var(--muted); margin-left: auto; }
+</style>
+</head>
+<body>
+<h1>path — Path Status</h1>
+<div class="meta">Generated 2026-09-04T12:13:27 by <code>path close</code></div>
+
+<div class="forecast"><div><div class="label">Recent rate</div><div class="figure">26.5 pts/wk</div><div class="label">last 14 days</div></div><div><div class="label">Remaining</div><div class="figure">0 pts</div><div class="label">0 tasks</div></div><div><div class="label">Projected finish</div><div class="figure">2026-09-04</div><div class="label">~0.0 weeks at this rate</div></div></div>
+<section id="board-section">
+  <h2>Backlog</h2>
+  <p class="empty">14 task(s) complete.</p>
+</section>
+
+<section id="burnup-section">
+  <h2>Burn-up</h2>
+  <div id="burnup"></div>
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--line1)"></span>Completed (cumulative)</span>
+    <span><span class="swatch" style="background:var(--line2)"></span>Remaining</span>
+  </div>
+</section>
+
+<section id="volatility-section">
+  <h2>Requirements Volatility</h2>
+  <div id="volatility"></div>
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--low)"></span>Low (pending)</span>
+    <span><span class="swatch" style="background:var(--medium)"></span>Medium (in-progress)</span>
+    <span><span class="swatch" style="background:var(--high)"></span>High (complete)</span>
+  </div>
+</section>
+
+<section id="decisions-section">
+  <h2>Decision Edge Latency</h2>
+  <div id="decisions"></div>
+</section>
+
+<section id="drift-section">
+  <h2>AI Workflow Drift</h2>
+  <div id="drift"></div>
+  <div class="legend">
+    <span><span class="swatch" style="background:var(--low)"></span>Correction</span>
+    <span><span class="swatch" style="background:var(--medium)"></span>Retry</span>
+    <span><span class="swatch" style="background:var(--high)"></span>Post-completion bug</span>
+  </div>
+</section>
+
+<script>
+const DATA = {"generated": "2026-09-04T12:13:27", "project": "path", "tasks": {"total": 14, "by_status": {"complete": 14}, "without_effort": []}, "batches": [{"id": "B-003", "title": "Sequence, batching, and forecasting", "status": "complete", "completed": "2026-09-04", "tasks_done": 8, "tasks_total": 8, "points_done": 49, "points_total": 49, "sequence": ["T-114", "T-115", "T-116", "T-117", "T-118", "T-119", "T-120", "T-121"]}], "readiness": {"ready": [], "waiting": [], "blocked": [], "in_progress": [], "complete": [{"id": "T-024", "title": "Let agents write durable preferences into the global profile", "effort": 8, "batch": null, "unblocks": 0, "implements": ["F-51", "F-52"], "status": "complete", "file": "tasks/T-024-let-agents-write-durable-preferences-into-the-global-profile.md"}, {"id": "T-025", "title": "Fix task project-field default for self-hosted Path repos", "effort": 3, "batch": null, "unblocks": 0, "implements": [], "status": "complete", "file": "tasks/T-025-fix-task-project-field-default-for-self-hosted-path-repos.md"}, {"id": "T-026", "title": "Fix the graphify invocation in graphify_run", "effort": 2, "batch": null, "unblocks": 0, "implements": [], "status": "complete", "file": "tasks/T-026-fix-the-graphify-invocation-in-graphify-run.md"}, {"id": "T-027", "title": "Keep tasks and build-log indexes current", "effort": 3, "batch": null, "unblocks": 0, "implements": [], "status": "complete", "file": "tasks/T-027-keep-tasks-and-build-log-indexes-current.md"}, {"id": "T-030", "title": "Retrospective check reads frontmatter, not prose", "effort": 2, "batch": null, "unblocks": 0, "implements": ["F-41"], "status": "complete", "file": "tasks/T-030-retrospective-check-reads-frontmatter-not-prose.md"}, {"id": "T-114", "title": "Batch document type and grouping commands", "effort": 8, "batch": "B-003", "unblocks": 3, "implements": ["F-53", "F-54", "F-27"], "status": "complete", "file": "tasks/T-114-batch-document-type-and-grouping-commands.md"}, {"id": "T-115", "title": "Completion rate and backlog forecast", "effort": 5, "batch": "B-003", "unblocks": 3, "implements": ["F-56", "F-57"], "status": "complete", "file": "tasks/T-115-completion-rate-and-backlog-forecast.md"}, {"id": "T-116", "title": "Readiness ranking and the next-work command", "effort": 8, "batch": "B-003", "unblocks": 3, "implements": ["F-58"], "status": "complete", "file": "tasks/T-116-readiness-ranking-and-the-next-work-command.md"}, {"id": "T-117", "title": "Batch-scoped bookkeeping", "effort": 8, "batch": "B-003", "unblocks": 1, "implements": ["F-59"], "status": "complete", "file": "tasks/T-117-batch-scoped-bookkeeping.md"}, {"id": "T-118", "title": "Status output for batches readiness and forecast", "effort": 5, "batch": "B-003", "unblocks": 2, "implements": ["F-55"], "status": "complete", "file": "tasks/T-118-status-output-for-batches-readiness-and-forecast.md"}, {"id": "T-119", "title": "State-grouped tasks index", "effort": 5, "batch": "B-003", "unblocks": 1, "implements": ["F-55"], "status": "complete", "file": "tasks/T-119-state-grouped-tasks-index.md"}, {"id": "T-120", "title": "Status page forecast banner and backlog board", "effort": 5, "batch": "B-003", "unblocks": 1, "implements": ["F-55", "F-34"], "status": "complete", "file": "tasks/T-120-status-page-forecast-banner-and-backlog-board.md"}, {"id": "T-121", "title": "Document batches readiness and forecasting", "effort": 5, "batch": "B-003", "unblocks": 0, "implements": ["F-25"], "status": "complete", "file": "tasks/T-121-document-batches-readiness-and-forecasting.md"}, {"id": "T-122", "title": "Rotate crowded date labels on the status page charts", "effort": 2, "batch": null, "unblocks": 0, "implements": ["F-34"], "status": "complete", "file": "tasks/T-122-rotate-crowded-date-labels-on-the-status-page-charts.md"}], "total": 14}, "burnup": {"backlog_total": 69, "points": [{"date": "2026-07-19", "completed": 8, "remaining": 61, "task": "T-024", "derived": false}, {"date": "2026-07-19", "completed": 11, "remaining": 58, "task": "T-025", "derived": false}, {"date": "2026-08-21", "completed": 13, "remaining": 56, "task": "T-026", "derived": false}, {"date": "2026-08-21", "completed": 16, "remaining": 53, "task": "T-027", "derived": false}, {"date": "2026-08-30", "completed": 18, "remaining": 51, "task": "T-030", "derived": false}, {"date": "2026-09-04", "completed": 26, "remaining": 43, "task": "T-114", "derived": false}, {"date": "2026-09-04", "completed": 31, "remaining": 38, "task": "T-115", "derived": false}, {"date": "2026-09-04", "completed": 39, "remaining": 30, "task": "T-116", "derived": false}, {"date": "2026-09-04", "completed": 47, "remaining": 22, "task": "T-117", "derived": false}, {"date": "2026-09-04", "completed": 52, "remaining": 17, "task": "T-118", "derived": false}, {"date": "2026-09-04", "completed": 57, "remaining": 12, "task": "T-119", "derived": false}, {"date": "2026-09-04", "completed": 62, "remaining": 7, "task": "T-120", "derived": false}, {"date": "2026-09-04", "completed": 67, "remaining": 2, "task": "T-121", "derived": false}, {"date": "2026-09-04", "completed": 69, "remaining": 0, "task": "T-122", "derived": false}]}, "velocity": {"window_days": 14, "from": "2026-08-21", "to": "2026-09-04", "tasks": 10, "points": 53, "points_per_week": 26.5, "sufficient": true, "derived": false}, "forecast": {"window_days": 14, "points_per_week": 26.5, "remaining_tasks": 0, "remaining_points": 0, "unestimated": [], "weeks_remaining": 0.0, "projected_date": "2026-09-04", "sufficient": true, "derived": false}, "volatility": [], "decisions": [], "drift": [{"date": "2026-08-21", "type": "correction", "effort": 1, "task": "T-026", "description": "graphify extract hard-errors on a doc-heavy corpus when no LLM API key is set; it degrades to AST-only only for a code-only corpus. Verified against the real CLI on the Path repo itself. Since Path runs unattended and most Path projects are doc-heavy, the cold-start arm now falls back to 'graphify update' (AST-only, no key) when the full build refuses. F-48's full-vs-incremental distinction is preserved: a full build is still attempted first."}, {"date": "2026-09-04", "type": "post-completion-bug", "effort": 1, "task": "T-117", "description": "close.current_task greps the Current Task line for the first T-NNN, so a line naming a batch and its members reported a completed member as current. Found by running path close after B-003."}], "provenance": {"tasks_total": 14, "effort_estimated": [], "completed_inferred": [], "any_derived": false}};
+const NS = "http://www.w3.org/2000/svg";
+function el(tag, attrs) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  return e;
+}
+function svg(w, h) { return el("svg", {viewBox: `0 0 ${w} ${h}`, width: "100%"}); }
+function empty(container, msg) {
+  const p = document.createElement("p");
+  p.className = "empty";
+  p.textContent = msg;
+  container.appendChild(p);
+}
+
+// Dates are ten characters wide and ticks are not, so a horizontal axis label
+// collides with its neighbours as soon as there are more than a handful of
+// them — and a burn-up gets one tick per completed task, so that is always.
+// Rotating -45 with the anchor at the end hangs each label down-left from its
+// own tick: they stop overlapping, and the tick a label belongs to is the one
+// its text points at. Reading them is a head-tilt to the left.
+function dateLabel(x, y, text) {
+  const t = el("text", {class: "axis-label", x: x, y: y, "text-anchor": "end",
+                        transform: `rotate(-45, ${x}, ${y})`});
+  t.textContent = text;
+  return t;
+}
+
+// ── Burn-up: two lines (completed cumulative, remaining) over dates ────────
+(function () {
+  const container = document.getElementById("burnup");
+  const pts = DATA.burnup.points;
+  const total = DATA.burnup.backlog_total;
+  if (!total) { empty(container, "No tasks with an effort estimate yet."); return; }
+  // PADB is deeper than PAD because the date labels below the axis are rotated
+  // and a rotated ten-character label is about 55px tall.
+  const W = 800, H = 300, PAD = 40, PADB = 95;
+  const s = svg(W, H);
+  const n = pts.length;
+  const x = i => PAD + (n === 1 ? 0 : (i / (n - 1)) * (W - 2 * PAD));
+  const y = v => H - PADB - (v / total) * (H - PAD - PADB);
+  s.appendChild(el("line", {class: "axis", x1: PAD, y1: H - PADB, x2: W - PAD, y2: H - PADB}));
+  s.appendChild(el("line", {class: "axis", x1: PAD, y1: PAD, x2: PAD, y2: H - PADB}));
+  const mkPath = (key) => pts.map((p, i) => `${i === 0 ? "M" : "L"}${x(i)},${y(p[key])}`).join(" ");
+  s.appendChild(el("path", {d: mkPath("completed"), fill: "none", stroke: "var(--line1)", "stroke-width": 2}));
+  s.appendChild(el("path", {d: mkPath("remaining"), fill: "none", stroke: "var(--line2)", "stroke-width": 2, "stroke-dasharray": "4,3"}));
+  pts.forEach((p, i) => {
+    s.appendChild(el("circle", {cx: x(i), cy: y(p.completed), r: 3, fill: "var(--line1)"}));
+    s.appendChild(dateLabel(x(i), H - PADB + 14, p.date));
+  });
+  const totalLabel = el("text", {class: "axis-label", x: PAD, y: PAD - 8});
+  totalLabel.textContent = `Backlog total: ${total} points`;
+  s.appendChild(totalLabel);
+  container.appendChild(s);
+})();
+
+// ── Requirements volatility: stacked bars per week, colored by impact ───────
+(function () {
+  const container = document.getElementById("volatility");
+  const buckets = DATA.volatility;
+  if (!buckets.length) { empty(container, "No work order changes logged yet."); return; }
+  const W = 800, H = 300, PAD = 40, PADB = 95;
+  const max = Math.max(...buckets.map(b => b.low + b.medium + b.high), 1);
+  const s = svg(W, H);
+  const bw = (W - 2 * PAD) / buckets.length;
+  s.appendChild(el("line", {class: "axis", x1: PAD, y1: H - PADB, x2: W - PAD, y2: H - PADB}));
+  buckets.forEach((b, i) => {
+    const bx = PAD + i * bw + bw * 0.15;
+    const barW = bw * 0.7;
+    let yTop = H - PADB;
+    [["low", "var(--low)"], ["medium", "var(--medium)"], ["high", "var(--high)"]].forEach(([k, color]) => {
+      const h = (b[k] / max) * (H - PAD - PADB);
+      yTop -= h;
+      s.appendChild(el("rect", {x: bx, y: yTop, width: barW, height: h, fill: color}));
+    });
+    s.appendChild(dateLabel(bx + barW / 2, H - PADB + 14, b.period));
+  });
+  container.appendChild(s);
+})();
+
+// ── Decision edge latency: table sorted open-first, oldest-first ───────────
+(function () {
+  const container = document.getElementById("decisions");
+  const rows = DATA.decisions;
+  if (!rows.length) { empty(container, "No decisions logged yet. Raise one with `path decision raise`."); return; }
+  const table = document.createElement("table");
+  table.innerHTML = "<thead><tr><th>Decision</th><th>Task</th><th>Raised</th><th>Resolved</th><th>Age (days)</th></tr></thead>";
+  const tbody = document.createElement("tbody");
+  rows.forEach(d => {
+    const tr = document.createElement("tr");
+    if (d.open) tr.className = "open";
+    tr.innerHTML = `<td>${d.question}</td><td>${d.task || "—"}</td><td>${d.raised}</td><td>${d.resolved || "open"}</td><td class="age">${d.age_days}</td>`;
+    tbody.appendChild(tr);
+  });
+  table.appendChild(tbody);
+  container.appendChild(table);
+})();
+
+// ── AI workflow drift: bar per event, height = effort, colored by type ──────
+(function () {
+  const container = document.getElementById("drift");
+  const events = DATA.drift;
+  if (!events.length) { empty(container, "No drift logged yet."); return; }
+  const W = 800, H = 300, PAD = 40, PADB = 95;
+  const colorOf = { correction: "var(--low)", retry: "var(--medium)", "post-completion-bug": "var(--high)" };
+  const max = Math.max(...events.map(e => e.effort), 3);
+  const s = svg(W, H);
+  const bw = (W - 2 * PAD) / events.length;
+  s.appendChild(el("line", {class: "axis", x1: PAD, y1: H - PADB, x2: W - PAD, y2: H - PADB}));
+  events.forEach((e, i) => {
+    const bx = PAD + i * bw + bw * 0.15;
+    const barW = bw * 0.7;
+    const h = (e.effort / max) * (H - PAD - PADB);
+    const rect = el("rect", {x: bx, y: H - PADB - h, width: barW, height: h, fill: colorOf[e.type] || "var(--muted)"});
+    const title = el("title", {});
+    title.textContent = `${e.date} — ${e.task} — ${e.type} (effort ${e.effort})\n${e.description}`;
+    rect.appendChild(title);
+    s.appendChild(rect);
+    s.appendChild(dateLabel(bx + barW / 2, H - PADB + 14, e.date));
+  });
+  container.appendChild(s);
+})();
+</script>
+</body>
+</html>
